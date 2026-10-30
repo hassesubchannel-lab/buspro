@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>行きたい場所アンケート</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --text: #1d2330; --muted: #667085;
+    --accent: #1f6feb; --accent-weak: #e8f0fe; --border: #d9dee7; --ok: #1a7f37; --err: #c62828; --pin: #e8590c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --card: #1b1f27; --text: #e6e9ef; --muted: #9aa4b2;
+      --accent: #5b9bff; --accent-weak: #1e2a40; --border: #2e3440; --ok: #4cc26a; --err: #ff6b6b; --pin: #ff8a3d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; line-height: 1.6; }
+  main { max-width: 640px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.35rem; margin: 0 0 4px; }
+  h2 { font-size: 1rem; margin: 0 0 10px; }
+  .lead { color: var(--muted); margin: 0 0 20px; font-size: .95rem; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 18px; margin-bottom: 16px; }
+  label { display: block; font-weight: 600; margin: 12px 0 6px; }
+  label:first-child { margin-top: 0; }
+  .req { font-weight: 400; color: var(--err); font-size: .8rem; margin-left: 4px; }
+  .opt { font-weight: 400; color: var(--muted); font-size: .8rem; margin-left: 4px; }
+  input[type=text], textarea { width: 100%; font: inherit; font-size: 1rem; padding: 10px 12px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+  textarea { min-height: 90px; resize: vertical; }
+  .row { display: flex; gap: 8px; }
+  .row input { flex: 1; min-width: 0; }
+  button { font: inherit; font-size: 1rem; padding: 10px 16px; border-radius: 8px; border: 1px solid var(--accent);
+    background: var(--accent); color: #fff; cursor: pointer; white-space: nowrap; }
+  button.sub { background: transparent; color: var(--accent); }
+  button.small { font-size: .85rem; padding: 4px 10px; }
+  button:disabled { opacity: .5; cursor: default; }
+  #map { height: 58vh; min-height: 320px; border-radius: 10px; border: 1px solid var(--border); margin-top: 10px; z-index: 0; }
+  .results { display: grid; gap: 6px; margin-top: 8px; }
+  .res { text-align: left; background: var(--bg); color: var(--text); border: 1px solid var(--border); width: 100%; white-space: normal; padding: 8px 12px; }
+  .res b { display: block; font-size: .98rem; }
+  .res small { display: block; color: var(--muted); font-size: .78rem; line-height: 1.4; }
+  .msg { margin-top: 8px; font-size: .9rem; color: var(--muted); }
+  .msg.err { color: var(--err); }
+  .msg.ok { color: var(--ok); font-weight: 600; }
+  .hint { font-size: .85rem; color: var(--muted); margin-top: 8px; }
+  .place { background: var(--accent-weak); border-radius: 8px; padding: 8px 12px; font-size: .9rem; }
+  .photo-pick { display: flex; gap: 8px; flex-wrap: wrap; }
+  #preview { display: block; max-width: 100%; max-height: 240px; border-radius: 8px; margin-top: 10px; }
+  .mine { list-style: none; margin: 0; padding: 0; }
+  .mine li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .mine li:last-child { border-bottom: 0; }
+  .mine .nm { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .mine .nm small { display: block; color: var(--muted); font-size: .78rem; }
+  .hidden { display: none !important; }
+  .note { font-size: .8rem; color: var(--muted); }
+  .pin { width: 22px; height: 22px; border-radius: 50% 50% 50% 0; background: var(--pin); border: 2px solid #fff;
+    transform: rotate(-45deg); box-shadow: 0 1px 4px rgba(0,0,0,.45); }
+  .pin.mine-pin { background: #6b7280; width: 16px; height: 16px; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">行きたい場所アンケート</h1>
+  <p class="lead">バスで行ってみたい場所を、地図にピンを立てて教えてください。1つずつ送れて、送ったあとに取り消すこともできます。</p>
+
+  <div id="setupWarn" class="card hidden">
+    <b>まだ受付の準備中です。</b><br>
+    <span class="note">（管理者の方へ：config.js に GAS_URL が設定されていません）</span>
+  </div>
+
+  <div class="card">
+    <label for="name">お名前<span class="req">必須</span></label>
+    <input type="text" id="name" maxlength="40" autocomplete="name" placeholder="例：山田 花子">
+    <div class="note" style="margin-top:6px">この端末に覚えておくので、次からは入力しなくて大丈夫です。</div>
+  </div>
+
+  <div class="card">
+    <h2>1. 場所を選ぶ</h2>
+    <div class="row">
+      <input type="text" id="q" placeholder="施設名や地名で検索（例：鎌倉 大仏）" enterkeyhint="search">
+      <button id="searchBtn">検索</button>
+    </div>
+    <div id="searchMsg" class="msg hidden"></div>
+    <div id="results" class="results"></div>
+    <div id="map"></div>
+    <div class="hint">検索するか、地図をタップするとピンが立ちます。ピンは指で動かして位置を直せます。</div>
+  </div>
+
+  <div class="card" id="formCard">
+    <h2>2. スポットの内容を書く</h2>
+    <div id="placeBox" class="place">まだ場所が選ばれていません。</div>
+
+    <label for="spot">スポット名<span class="req">必須</span></label>
+    <input type="text" id="spot" maxlength="80" placeholder="例：鎌倉大仏（高徳院）">
+
+    <label for="desc">説明<span class="opt">任意</span></label>
+    <textarea id="desc" maxlength="1000" placeholder="行きたい理由、おすすめポイントなど"></textarea>
+
+    <label>写真<span class="req">必須・1枚</span></label>
+    <div class="photo-pick">
+      <button class="sub" id="pickBtn" type="button">写真を選ぶ</button>
+      <input type="file" id="photo" accept="image/*" class="hidden">
+    </div>
+    <div id="photoMsg" class="msg hidden"></div>
+    <img id="preview" class="hidden" alt="選んだ写真">
+
+    <button id="submitBtn" style="width:100%;margin-top:16px" disabled>このスポットを送る</button>
+    <div id="submitMsg" class="msg hidden"></div>
+  </div>
+
+  <div class="card" id="mineCard">
+    <h2>送ったスポット</h2>
+    <ul class="mine" id="mineList"></ul>
+    <div id="mineEmpty" class="note">まだ送っていません。</div>
+  </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="config.js"></script>
+<script>
+(function () {
+  const cfg = window.BS_CONFIG || {};
+  const $ = (id) => document.getElementById(id);
+  if (cfg.EVENT_TITLE) { $("title").textContent = cfg.EVENT_TITLE; document.title = cfg.EVENT_TITLE; }
+  if (!cfg.GAS_URL) $("setupWarn").classList.remove("hidden");
+
+  // ---- 小さな道具 ----
+  const DEV_KEY = "bs_device_id", NAME_KEY = "bs_name", MINE_KEY = "bs_mine";
+  function storageGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function storageSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* 保存できなくても続ける */ } }
+  function escapeHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+  function newId() {
+    return crypto.randomUUID ? crypto.randomUUID() : (Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12));
+  }
+  function deviceId() {
+    let id = storageGet(DEV_KEY);
+    if (!id) { id = newId(); storageSet(DEV_KEY, id); }
+    return id;
+  }
+  function setMsg(el, text, kind) {
+    el.textContent = text || "";
+    el.className = "msg" + (kind ? " " + kind : "") + (text ? "" : " hidden");
+  }
+  let seq = 0;
+  function jsonp(url, params, timeoutMs) {
+    return new Promise((resolve, reject) => {
+      const cb = "__bs_cb" + Date.now().toString(36) + (seq++);
+      const q = new URLSearchParams(params);
+      q.set("callback", cb);
+      const script = document.createElement("script");
+      let done = false;
+      const cleanup = () => { done = true; try { delete window[cb]; } catch (e) { window[cb] = undefined; } script.remove(); };
+      const timer = setTimeout(() => { if (!done) { cleanup(); reject(new Error("通信がタイムアウトしました")); } }, timeoutMs || 20000);
+      window[cb] = (data) => { clearTimeout(timer); cleanup(); resolve(data); };
+      script.onerror = () => { clearTimeout(timer); if (!done) { cleanup(); reject(new Error("通信に失敗しました")); } };
+      script.src = url + (url.includes("?") ? "&" : "?") + q.toString();
+      document.head.appendChild(script);
+    });
+  }
+
+  // ---- 名前 ----
+  $("name").value = storageGet(NAME_KEY) || "";
+  $("name").addEventListener("input", () => { storageSet(NAME_KEY, $("name").value.trim()); updateSubmit(); });
+
+  // ---- 地図 ----
+  const map = L.map("map", { zoomControl: true });
+  const gsiAttr = '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">地理院タイル</a>';
+  const std = L.tileLayer("https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png", { maxZoom: 18, attribution: gsiAttr }).addTo(map);
+  const photo = L.tileLayer("https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg", { maxZoom: 18, attribution: gsiAttr });
+  L.control.layers({ "地図": std, "航空写真": photo }, null, { position: "topright" }).addTo(map);
+  const KANTO = [[34.85, 138.55], [37.15, 140.95]];
+  map.fitBounds(KANTO);
+
+  const pinIcon = L.divIcon({ className: "", html: '<div class="pin"></div>', iconSize: [22, 22], iconAnchor: [11, 26] });
+  const mineIcon = L.divIcon({ className: "", html: '<div class="pin mine-pin"></div>', iconSize: [16, 16], iconAnchor: [8, 19] });
+  let marker = null;
+  let chosen = null; // { lat, lng, place }
+
+  function placePin(lat, lng, place, title) {
+    chosen = { lat, lng, place: place || "" };
+    if (!marker) {
+      marker = L.marker([lat, lng], { icon: pinIcon, draggable: true }).addTo(map);
+      marker.on("dragend", () => {
+        const p = marker.getLatLng();
+        chosen.lat = p.lat; chosen.lng = p.lng;
+        showPlace();
+      });
+    } else {
+      marker.setLatLng([lat, lng]);
+    }
+    if (title && !$("spot").value.trim()) $("spot").value = title;
+    showPlace();
+    updateSubmit();
+  }
+  function showPlace() {
+    $("placeBox").innerHTML = "選んだ場所：" + (chosen.place ? "<b>" + escapeHtml(chosen.place) + "</b> 付近" : "地図で選んだ位置") +
+      '<br><span class="note">緯度 ' + chosen.lat.toFixed(5) + "・経度 " + chosen.lng.toFixed(5) + "</span>";
+  }
+  map.on("click", (e) => placePin(e.latlng.lat, e.latlng.lng, "", ""));
+
+  // ---- 検索（OpenStreetMap の施設検索 ＋ 国土地理院の地名検索） ----
+  async function searchOsm(q) {
+    const u = "https://nominatim.openstreetmap.org/search?" + new URLSearchParams({
+      format: "jsonv2", q, countrycodes: "jp", "accept-language": "ja", limit: "8",
+      viewbox: "138.3,37.3,141.1,34.8"
+    });
+    const r = await fetch(u);
+    if (!r.ok) throw new Error("osm " + r.status);
+    const list = await r.json();
+    return list.map((x) => {
+      const full = String(x.display_name || "");
+      const title = x.name || full.split(",")[0];
+      const area = full.split(",").map((s) => s.trim()).filter((s) => s && s !== title && !/^\d{3}-?\d{4}$/.test(s) && s !== "日本").reverse().slice(0, 4).join(" ");
+      return { title, sub: area, lat: Number(x.lat), lng: Number(x.lon) };
+    });
+  }
+  async function searchGsi(q) {
+    const r = await fetch("https://msearch.gsi.go.jp/address-search/AddressSearch?q=" + encodeURIComponent(q));
+    if (!r.ok) throw new Error("gsi " + r.status);
+    const list = await r.json();
+    return list.slice(0, 6).map((x) => ({
+      title: x.properties.title, sub: "地名・住所", lat: x.geometry.coordinates[1], lng: x.geometry.coordinates[0]
+    }));
+  }
+  async function doSearch() {
+    const q = $("q").value.trim();
+    if (!q) return;
+    setMsg($("searchMsg"), "検索中…");
+    $("results").innerHTML = "";
+    const [a, b] = await Promise.allSettled([searchOsm(q), searchGsi(q)]);
+    const list = [];
+    for (const r of [a, b]) {
+      if (r.status !== "fulfilled") continue;
+      for (const x of r.value) {
+        if (!isFinite(x.lat) || !isFinite(x.lng)) continue;
+        if (list.some((y) => y.title === x.title && Math.abs(y.lat - x.lat) < 0.002 && Math.abs(y.lng - x.lng) < 0.002)) continue;
+        list.push(x);
+      }
+    }
+    if (a.status !== "fulfilled" && b.status !== "fulfilled") {
+      setMsg($("searchMsg"), "検索できませんでした。通信環境を確認するか、地図を直接タップしてください。", "err");
+      return;
+    }
+    if (!list.length) {
+      setMsg($("searchMsg"), "見つかりませんでした。言葉を変えて検索するか、地図を直接タップしてください。");
+      return;
+    }
+    setMsg($("searchMsg"), "");
+    list.slice(0, 10).forEach((x) => {
+      const btn = document.createElement("button");
+      btn.className = "res";
+      btn.innerHTML = "<b>" + escapeHtml(x.title) + "</b><small>" + escapeHtml(x.sub) + "</small>";
+      btn.onclick = () => {
+        $("results").innerHTML = "";
+        map.setView([x.lat, x.lng], 16);
+        placePin(x.lat, x.lng, x.title, x.sub === "地名・住所" ? "" : x.title);
+        $("map").scrollIntoView({ behavior: "smooth", block: "center" });
+      };
+      $("results").appendChild(btn);
+    });
+  }
+  $("searchBtn").onclick = doSearch;
+  $("q").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) doSearch(); });
+
+  // ---- 写真（送る前に端末で小さくする） ----
+  let photoData = null, thumbData = null;
+  function loadImage(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("この写真は読み込めませんでした")); };
+      img.src = url;
+    });
+  }
+  function shrink(img, maxSide, quality) {
+    const s = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(img.naturalWidth * s));
+    c.height = Math.max(1, Math.round(img.naturalHeight * s));
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(img, 0, 0, c.width, c.height);
+    return c.toDataURL("image/jpeg", quality);
+  }
+  $("pickBtn").onclick = () => $("photo").click();
+  $("photo").onchange = async () => {
+    const file = $("photo").files && $("photo").files[0];
+    if (!file) return;
+    setMsg($("photoMsg"), "写真を準備中…");
+    try {
+      const img = await loadImage(file);
+      let q = 0.82, side = 1280;
+      photoData = shrink(img, side, q);
+      while (photoData.length > 1400000 && side > 640) { side -= 200; q -= 0.06; photoData = shrink(img, side, q); }
+      thumbData = shrink(img, 240, 0.7);
+      if (thumbData.length > 40000) thumbData = shrink(img, 160, 0.6);
+      $("preview").src = photoData;
+      $("preview").classList.remove("hidden");
+      $("pickBtn").textContent = "写真を選び直す";
+      setMsg($("photoMsg"), "");
+    } catch (e) {
+      photoData = thumbData = null;
+      $("preview").classList.add("hidden");
+      setMsg($("photoMsg"), e.message + "。別の写真を選んでください。", "err");
+    }
+    updateSubmit();
+  };
+
+  // ---- 送信 ----
+  let pendingId = newId(); // 再送しても二重にならないよう、送れるまで同じIDを使う
+  function updateSubmit() {
+    const ready = cfg.GAS_URL && $("name").value.trim() && chosen && $("spot").value.trim() && photoData;
+    $("submitBtn").disabled = !ready;
+  }
+  $("spot").addEventListener("input", updateSubmit);
+
+  function resetForm() {
+    pendingId = newId();
+    chosen = null;
+    if (marker) { map.removeLayer(marker); marker = null; }
+    $("spot").value = ""; $("desc").value = ""; $("photo").value = "";
+    photoData = thumbData = null;
+    $("preview").classList.add("hidden");
+    $("pickBtn").textContent = "写真を選ぶ";
+    $("placeBox").textContent = "まだ場所が選ばれていません。";
+    $("results").innerHTML = ""; $("q").value = "";
+    updateSubmit();
+  }
+
+  $("submitBtn").onclick = async () => {
+    const name = $("name").value.trim();
+    if (!name) { $("name").focus(); return; }
+    const spot = $("spot").value.trim();
+    $("submitBtn").disabled = true;
+    setMsg($("submitMsg"), "送信中…（写真があるので少し時間がかかります）");
+    const payload = {
+      action: "submit", id: pendingId, deviceId: deviceId(), name, spot,
+      desc: $("desc").value.trim(), lat: chosen.lat, lng: chosen.lng, place: chosen.place,
+      photo: photoData, thumb: thumbData
+    };
+    try {
+      // Content-Type を付けない（text/plain）ことで、GAS へそのまま送れる
+      const res = await fetch(cfg.GAS_URL, { method: "POST", body: JSON.stringify(payload) });
+      const r = await res.json();
+      if (!r || !r.ok) throw new Error((r && r.error) || "送信に失敗しました");
+      addMine({ id: pendingId, spot, lat: chosen.lat, lng: chosen.lng, time: new Date().toISOString() });
+      resetForm();
+      setMsg($("submitMsg"), "「" + spot + "」を送りました。ほかにもあれば続けて追加できます。", "ok");
+      $("mineCard").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } catch (e) {
+      setMsg($("submitMsg"), "送信できませんでした：" + e.message + "　もう一度押してください。", "err");
+      updateSubmit();
+    }
+  };
+
+  // ---- 送ったスポット（この端末の記録） ----
+  let mine = [];
+  try { mine = JSON.parse(storageGet(MINE_KEY) || "[]"); } catch (e) { mine = []; }
+  const mineLayer = L.layerGroup().addTo(map);
+  function saveMine() { storageSet(MINE_KEY, JSON.stringify(mine)); renderMine(); }
+  function addMine(s) { mine.push(s); saveMine(); }
+  function renderMine() {
+    const ul = $("mineList");
+    ul.innerHTML = "";
+    mineLayer.clearLayers();
+    $("mineEmpty").classList.toggle("hidden", mine.length > 0);
+    mine.forEach((s) => {
+      const li = document.createElement("li");
+      const d = s.time ? new Date(s.time) : null;
+      li.innerHTML = '<div class="nm">' + escapeHtml(s.spot) + (d ? "<small>" + (d.getMonth() + 1) + "/" + d.getDate() + " " +
+        d.getHours() + ":" + String(d.getMinutes()).padStart(2, "0") + " に送信</small>" : "") + "</div>";
+      if (isFinite(s.lat) && isFinite(s.lng)) {
+        const show = document.createElement("button");
+        show.className = "sub small"; show.textContent = "地図";
+        show.onclick = () => { map.setView([s.lat, s.lng], 16); $("map").scrollIntoView({ behavior: "smooth", block: "center" }); };
+        li.appendChild(show);
+        L.marker([s.lat, s.lng], { icon: mineIcon, interactive: false }).addTo(mineLayer);
+      }
+      const del = document.createElement("button");
+      del.className = "sub small"; del.textContent = "取り消す";
+      del.onclick = () => cancelSpot(s, del);
+      li.appendChild(del);
+      ul.appendChild(li);
+    });
+  }
+  async function cancelSpot(s, btn) {
+    if (!confirm("「" + s.spot + "」を取り消しますか？")) return;
+    btn.disabled = true; btn.textContent = "取り消し中…";
+    try {
+      const r = await jsonp(cfg.GAS_URL, { action: "cancel", id: s.id, deviceId: deviceId() });
+      if (!r || !r.ok) throw new Error((r && r.error) || "取り消せませんでした");
+      mine = mine.filter((x) => x.id !== s.id);
+      saveMine();
+      setMsg($("submitMsg"), "「" + s.spot + "」を取り消しました。", "ok");
+    } catch (e) {
+      alert("取り消せませんでした：" + e.message);
+      btn.disabled = false; btn.textContent = "取り消す";
+    }
+  }
+  renderMine();
+
+  // 幹事側で消された分などを合わせる
+  if (cfg.GAS_URL && mine.length) {
+    jsonp(cfg.GAS_URL, { action: "mine", deviceId: deviceId() }).then((r) => {
+      if (!r || !r.ok) return;
+      const alive = new Set(r.spots.map((x) => x.id));
+      const next = mine.filter((x) => alive.has(x.id));
+      if (next.length !== mine.length) { mine = next; saveMine(); }
+    }).catch(() => {});
+  }
+})();
+</script>
+</body>
+</html>
